@@ -17,6 +17,10 @@ interface MemoriesState {
   status: 'idle' | 'loading' | 'succeeded' | 'failed';
   error: string | null;
   selectedMemoryIds: string[];
+  semanticSearch: {
+    active: boolean;
+    query: string;
+  };
 }
 
 const initialState: MemoriesState = {
@@ -27,6 +31,10 @@ const initialState: MemoriesState = {
   status: 'idle',
   error: null,
   selectedMemoryIds: [],
+  semanticSearch: {
+    active: false,
+    query: '',
+  },
 };
 
 const memoriesSlice = createSlice({
@@ -53,6 +61,18 @@ const memoriesSlice = createSlice({
       state.status = 'failed';
       state.error = action.payload;
     },
+    setSemanticSearch: (state, action: PayloadAction<{ query: string }>) => {
+      state.semanticSearch = {
+        active: true,
+        query: action.payload.query,
+      };
+    },
+    clearSemanticSearch: (state) => {
+      state.semanticSearch = {
+        active: false,
+        query: '',
+      };
+    },
     resetMemoriesState: (state) => {
       state.status = 'idle';
       state.error = null;
@@ -61,6 +81,10 @@ const memoriesSlice = createSlice({
       state.selectedMemory = null;
       state.accessLogs = [];
       state.relatedMemories = [];
+      state.semanticSearch = {
+        active: false,
+        query: '',
+      };
     },
     selectMemory: (state, action: PayloadAction<string>) => {
       if (!state.selectedMemoryIds.includes(action.payload)) {
@@ -94,7 +118,9 @@ export const {
   clearSelection,
   setSelectedMemory,
   setAccessLogs,
-  setRelatedMemories
+  setRelatedMemories,
+  setSemanticSearch,
+  clearSemanticSearch
 } = memoriesSlice.actions;
 
 export default memoriesSlice.reducer; 

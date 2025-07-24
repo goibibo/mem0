@@ -1,26 +1,28 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { HiHome, HiMiniRectangleStack } from "react-icons/hi2";
-import { RiApps2AddFill } from "react-icons/ri";
+import { HiMiniRectangleStack } from "react-icons/hi2";
 import { FiRefreshCcw } from "react-icons/fi";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CreateMemoryDialog } from "@/app/memories/components/CreateMemoryDialog";
+import { CreateUserDialog } from "@/app/users/components/CreateUserDialog";
 import { useMemoriesApi } from "@/hooks/useMemoriesApi";
 import Image from "next/image";
-import { useStats } from "@/hooks/useStats";
+
 import { useAppsApi } from "@/hooks/useAppsApi";
-import { Settings } from "lucide-react";
 import { useConfig } from "@/hooks/useConfig";
+import { useUsersApi } from "@/hooks/useUsersApi";
+import { useRouter } from "next/navigation";
 
 export function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
 
   const memoriesApi = useMemoriesApi();
   const appsApi = useAppsApi();
-  const statsApi = useStats();
   const configApi = useConfig();
+  const usersApi = useUsersApi();
 
   // Define route matchers with typed parameter extraction
   const routeBasedFetchMapping: {
@@ -52,12 +54,8 @@ export function Navbar() {
       getFetchers: () => [appsApi.fetchApps],
     },
     {
-      match: /^\/$/,
-      getFetchers: () => [statsApi.fetchStats, memoriesApi.fetchMemories],
-    },
-    {
-      match: /^\/settings$/,
-      getFetchers: () => [configApi.fetchConfig],
+      match: /^\/users$/,
+      getFetchers: () => [usersApi.fetchUsers],
     },
   ];
 
@@ -98,18 +96,6 @@ export function Navbar() {
           <span className="text-xl font-medium">OpenMemory</span>
         </Link>
         <div className="flex items-center gap-2">
-          <Link href="/">
-            <Button
-              variant="outline"
-              size="sm"
-              className={`flex items-center gap-2 border-none ${
-                isActive("/") ? activeClass : inactiveClass
-              }`}
-            >
-              <HiHome />
-              Dashboard
-            </Button>
-          </Link>
           <Link href="/memories">
             <Button
               variant="outline"
@@ -120,30 +106,6 @@ export function Navbar() {
             >
               <HiMiniRectangleStack />
               Memories
-            </Button>
-          </Link>
-          <Link href="/apps">
-            <Button
-              variant="outline"
-              size="sm"
-              className={`flex items-center gap-2 border-none ${
-                isActive("/apps") ? activeClass : inactiveClass
-              }`}
-            >
-              <RiApps2AddFill />
-              Apps
-            </Button>
-          </Link>
-          <Link href="/settings">
-            <Button
-              variant="outline"
-              size="sm"
-              className={`flex items-center gap-2 border-none ${
-                isActive("/settings") ? activeClass : inactiveClass
-              }`}
-            >
-              <Settings />
-              Settings
             </Button>
           </Link>
         </div>
@@ -157,7 +119,18 @@ export function Navbar() {
             <FiRefreshCcw className="transition-transform duration-300 group-hover:rotate-180" />
             Refresh
           </Button>
-          <CreateMemoryDialog />
+          <CreateMemoryDialog 
+            onMemoryCreated={() => {
+              // Navigate to memories page if not already there
+              if (pathname !== '/memories') {
+                router.push('/memories?page=1&size=10');
+              } else {
+                // If already on memories page, just refresh
+                window.location.reload();
+              }
+            }} 
+          />
+          <CreateUserDialog />
         </div>
       </div>
     </header>

@@ -1,6 +1,6 @@
 import logging
 from datetime import UTC, datetime
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Dict
 from uuid import UUID
 
 from app.database import get_db
@@ -17,12 +17,13 @@ from app.models import (
 from app.schemas import MemoryResponse
 from app.utils.memory import get_memory_client
 from app.utils.permissions import check_memory_access_permissions
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate as sqlalchemy_paginate
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
+from qdrant_client import models as qdrant_models
 
 router = APIRouter(prefix="/api/v1/memories", tags=["memories"])
 
@@ -178,16 +179,28 @@ async def list_memories(
 # Get all categories
 @router.get("/categories")
 async def get_categories(
-    user_id: str,
+    user_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Get unique categories associated with the user's memories
-    # Get all memories
-    memories = db.query(Memory).filter(Memory.user_id == user.id, Memory.state != MemoryState.deleted, Memory.state != MemoryState.archived).all()
+    if user_id:
+        # Get categories for specific user
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get unique categories associated with the user's memories
+        memories = db.query(Memory).filter(
+            Memory.user_id == user.id, 
+            Memory.state != MemoryState.deleted, 
+            Memory.state != MemoryState.archived
+        ).all()
+    else:
+        # Get all categories from all users
+        memories = db.query(Memory).filter(
+            Memory.state != MemoryState.deleted, 
+            Memory.state != MemoryState.archived
+        ).all()
+    
     # Get all categories from memories
     categories = [category for memory in memories for category in memory.categories]
     # Get unique categories
@@ -227,7 +240,7 @@ async def create_memory(
 
     # Check if app is active
     if not app_obj.is_active:
-        raise HTTPException(status_code=403, detail=f"App {request.app} is currently paused on OpenMemory. Cannot create new memories.")
+        raise HTTPException(status_code=403, detail=f"Client/Agent {request.app} is currently paused on OpenMemory. Cannot create new memories.")
 
     # Log what we're about to do
     logging.info(f"Creating memory for user_id: {request.user_id} with app: {request.app}")
@@ -485,12 +498,14 @@ async def update_memory(
     return memory
 
 class FilterMemoriesRequest(BaseModel):
-    user_id: str
+    user_id: Optional[str] = None  # Made optional for backward compatibility
+    user_ids: Optional[List[str]] = None  # New field for multiple users
     page: int = 1
     size: int = 10
     search_query: Optional[str] = None
     app_ids: Optional[List[UUID]] = None
     category_ids: Optional[List[UUID]] = None
+    metadata_filters: Optional[Dict[str, str]] = None
     sort_column: Optional[str] = None
     sort_direction: Optional[str] = None
     from_date: Optional[int] = None
@@ -502,15 +517,30 @@ async def filter_memories(
     request: FilterMemoriesRequest,
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.user_id == request.user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # Handle user filtering
+    user_ids_to_filter = []
+    
+    # Support both single user_id (backward compatibility) and multiple user_ids
+    if request.user_id:
+        user = db.query(User).filter(User.user_id == request.user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_ids_to_filter = [user.id]
+    elif request.user_ids:
+        users = db.query(User).filter(User.user_id.in_(request.user_ids)).all()
+        user_ids_to_filter = [user.id for user in users]
+    else:
+        # If no user specified, get all memories from all users
+        user_ids_to_filter = None
 
     # Build base query
     query = db.query(Memory).filter(
-        Memory.user_id == user.id,
         Memory.state != MemoryState.deleted,
     )
+    
+    # Apply user filter if specified
+    if user_ids_to_filter is not None:
+        query = query.filter(Memory.user_id.in_(user_ids_to_filter))
 
     # Filter archived memories based on show_archived parameter
     if not request.show_archived:
@@ -532,6 +562,19 @@ async def filter_memories(
         query = query.join(Memory.categories).filter(Category.id.in_(request.category_ids))
     else:
         query = query.outerjoin(Memory.categories)
+
+    # Apply metadata filters
+    if request.metadata_filters:
+        logging.info(f"Applying metadata filters: {request.metadata_filters}")
+        for key, value in request.metadata_filters.items():
+            # Use JSON path extraction that works with both SQLite and MySQL
+            # For SQLite: uses json_extract
+            # For MySQL: uses ->> operator
+            from sqlalchemy import func
+            query = query.filter(
+                func.json_extract(Memory.metadata_, f'$.{key}') == value
+            )
+            logging.info(f"Applied filter for key '{key}' with value '{value}'")
 
     # Apply date filters
     if request.from_date:
@@ -566,9 +609,10 @@ async def filter_memories(
         # Default sorting
         query = query.order_by(Memory.created_at.desc())
 
-    # Add eager loading for categories and make the query distinct
+    # Add eager loading for categories and user, and make the query distinct
     query = query.options(
-        joinedload(Memory.categories)
+        joinedload(Memory.categories),
+        joinedload(Memory.user)
     ).distinct(Memory.id)
 
     # Use fastapi-pagination's paginate function
@@ -583,6 +627,7 @@ async def filter_memories(
                 state=memory.state.value,
                 app_id=memory.app_id,
                 app_name=memory.app.name if memory.app else None,
+                user_id=memory.user.user_id if memory.user else None,
                 categories=[category.name for category in memory.categories],
                 metadata_=memory.metadata_
             )
@@ -641,9 +686,136 @@ async def get_related_memories(
                 state=memory.state.value,
                 app_id=memory.app_id,
                 app_name=memory.app.name if memory.app else None,
+                user_id=memory.user.user_id if memory.user else None,
                 categories=[category.name for category in memory.categories],
                 metadata_=memory.metadata_
             )
             for memory in items
         ]
     )
+
+class SearchMemoriesRequest(BaseModel):
+    query: str = Field(..., description="Natural language search query", example="What are the user's hobbies?")
+    user_id: Optional[str] = Field(None, description="Single user ID to filter by", example="user123")
+    user_ids: Optional[List[str]] = Field(None, description="Multiple user IDs to filter by", example=["user1", "user2"])
+    limit: int = Field(10, description="Maximum number of results", ge=1, le=100)
+    threshold: float = Field(0.0, description="Minimum relevance score (0-1)", ge=0.0, le=1.0)
+    include_metadata: bool = Field(True, description="Include custom metadata in response")
+    app_ids: Optional[List[UUID]] = Field(None, description="Filter by application IDs")
+
+
+@router.post("/search", response_model=List[MemoryResponse])
+async def search_memories(
+    request: SearchMemoriesRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Search memories using vector search with natural language queries.
+    Returns memories sorted by relevance score.
+    
+    Example request:
+    {
+        "query": "What are the user's favorite foods?",
+        "user_id": "user123",
+        "limit": 10,
+        "threshold": 0.5
+    }
+    """
+    try:
+        # Get memory client
+        memory_client = get_memory_client()
+        if not memory_client:
+            raise HTTPException(status_code=503, detail="Memory system is currently unavailable")
+        
+        # Get users if specified
+        target_user_ids = []
+        if request.user_id:
+            user = db.query(User).filter(User.user_id == request.user_id).first()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            target_user_ids = [user.user_id]
+        elif request.user_ids:
+            users = db.query(User).filter(User.user_id.in_(request.user_ids)).all()
+            target_user_ids = [user.user_id for user in users]
+        
+        # Build search conditions
+        conditions = []
+        
+        # User filter
+        if target_user_ids:
+            if len(target_user_ids) == 1:
+                conditions.append(qdrant_models.FieldCondition(
+                    key="user_id", 
+                    match=qdrant_models.MatchValue(value=target_user_ids[0])
+                ))
+            else:
+                conditions.append(qdrant_models.FieldCondition(
+                    key="user_id",
+                    match=qdrant_models.MatchAny(any=target_user_ids)
+                ))
+        
+        # App filter
+        if request.app_ids:
+            app_names = db.query(App.name).filter(App.id.in_(request.app_ids)).all()
+            app_names = [name[0] for name in app_names]
+            if app_names:
+                conditions.append(qdrant_models.FieldCondition(
+                    key="app_name",
+                    match=qdrant_models.MatchAny(any=app_names)
+                ))
+        
+        # Create filter if conditions exist
+        filters = qdrant_models.Filter(must=conditions) if conditions else None
+        
+        # Generate embeddings for the query
+        embeddings = memory_client.embedding_model.embed(request.query, "search")
+        
+        # Perform vector search
+        hits = memory_client.vector_store.client.query_points(
+            collection_name=memory_client.vector_store.collection_name,
+            query=embeddings,
+            query_filter=filters,
+            limit=request.limit,
+            score_threshold=request.threshold
+        )
+        
+        # Process and enrich results
+        result_memories = []
+        for hit in hits.points:
+            memory_id = UUID(hit.id)
+            db_memory = db.query(Memory).options(
+                joinedload(Memory.app),
+                joinedload(Memory.user),
+                joinedload(Memory.categories)
+            ).filter(Memory.id == memory_id).first()
+            
+            if db_memory:
+                # Include score in metadata for sorting/display
+                memory_metadata = {}
+                if request.include_metadata:
+                    memory_metadata = db_memory.metadata_ or {}
+                memory_metadata['relevance_score'] = hit.score
+                
+                memory_response = MemoryResponse(
+                    id=db_memory.id,
+                    content=hit.payload.get("data", db_memory.content),
+                    user_id=db_memory.user.user_id,
+                    app_id=db_memory.app_id,
+                    app_name=db_memory.app.name,
+                    metadata_=memory_metadata,
+                    state=db_memory.state,
+                    categories=[cat.name for cat in db_memory.categories],
+                    created_at=db_memory.created_at
+                )
+                result_memories.append(memory_response)
+        
+        # Sort by relevance score (highest first)
+        result_memories.sort(key=lambda m: m.metadata_.get('relevance_score', 0), reverse=True)
+        
+        logging.info(f"Search query '{request.query}' returned {len(result_memories)} results")
+        
+        return result_memories
+        
+    except Exception as e:
+        logging.error(f"Error searching memories: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error searching memories: {str(e)}")

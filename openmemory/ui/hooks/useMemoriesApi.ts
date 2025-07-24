@@ -25,6 +25,7 @@ interface ApiMemoryItem {
   categories: string[];
   metadata_?: Record<string, any>;
   app_name: string;
+  user_id: string;
 }
 
 // Define the shape of the API response
@@ -76,6 +77,7 @@ interface UseMemoriesApiReturn {
     filters?: {
       apps?: string[];
       categories?: string[];
+      users?: string[];
       sortColumn?: string;
       sortDirection?: 'asc' | 'desc';
       showArchived?: boolean;
@@ -84,7 +86,7 @@ interface UseMemoriesApiReturn {
   fetchMemoryById: (memoryId: string) => Promise<void>;
   fetchAccessLogs: (memoryId: string, page?: number, pageSize?: number) => Promise<void>;
   fetchRelatedMemories: (memoryId: string) => Promise<void>;
-  createMemory: (text: string) => Promise<void>;
+  createMemory: (text: string, customUserId?: string, metadata?: any) => Promise<void>;
   deleteMemories: (memoryIds: string[]) => Promise<void>;
   updateMemory: (memoryId: string, content: string) => Promise<void>;
   updateMemoryState: (memoryIds: string[], state: string) => Promise<void>;
@@ -113,6 +115,8 @@ export const useMemoriesApi = (): UseMemoriesApiReturn => {
     filters?: {
       apps?: string[];
       categories?: string[];
+      users?: string[];
+      metadata?: Record<string, string>;
       sortColumn?: string;
       sortDirection?: 'asc' | 'desc';
       showArchived?: boolean;
@@ -121,19 +125,28 @@ export const useMemoriesApi = (): UseMemoriesApiReturn => {
     setIsLoading(true);
     setError(null);
     try {
+      const requestBody = {
+        // Don't send user_id or user_ids to get all users' memories by default
+        // Only send user filters if explicitly selected
+        user_id: undefined,  // Always undefined to prevent single-user filtering
+        user_ids: filters?.users && filters.users.length > 0 ? filters.users : undefined,
+        page: page,
+        size: size,
+        search_query: query || undefined,
+        app_ids: filters?.apps && filters.apps.length > 0 ? filters.apps : undefined,
+        category_ids: filters?.categories && filters.categories.length > 0 ? filters.categories : undefined,
+        sort_column: filters?.sortColumn?.toLowerCase() || undefined,
+        sort_direction: filters?.sortDirection || undefined,
+        show_archived: filters?.showArchived || undefined,
+        metadata_filters: filters?.metadata && Object.keys(filters.metadata).length > 0 ? filters.metadata : undefined
+      };
+      
+      console.log("Fetching memories with filters:", requestBody);
+      console.log("Metadata filters specifically:", filters?.metadata);
+      
       const response = await axios.post<ApiResponse>(
         `${URL}/api/v1/memories/filter`,
-        {
-          user_id: user_id,
-          page: page,
-          size: size,
-          search_query: query,
-          app_ids: filters?.apps,
-          category_ids: filters?.categories,
-          sort_column: filters?.sortColumn?.toLowerCase(),
-          sort_direction: filters?.sortDirection,
-          show_archived: filters?.showArchived
-        }
+        requestBody
       );
 
       const adaptedMemories: Memory[] = response.data.items.map((item: ApiMemoryItem) => ({
@@ -144,7 +157,8 @@ export const useMemoriesApi = (): UseMemoriesApiReturn => {
         metadata: item.metadata_,
         categories: item.categories as Category[],
         client: 'api',
-        app_name: item.app_name
+        app_name: item.app_name,
+        user_id: item.user_id
       }));
       setIsLoading(false);
       dispatch(setMemoriesSuccess(adaptedMemories));
@@ -154,20 +168,26 @@ export const useMemoriesApi = (): UseMemoriesApiReturn => {
         pages: response.data.pages
       };
     } catch (err: any) {
-      const errorMessage = err.message || 'Failed to fetch memories';
+      console.error("Fetch memories error:", err);
+      if (err.response) {
+        console.error("Error response status:", err.response.status);
+        console.error("Error response data:", err.response.data);
+      }
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to fetch memories';
       setError(errorMessage);
       setIsLoading(false);
       throw new Error(errorMessage);
     }
   }, [user_id, dispatch]);
 
-  const createMemory = async (text: string): Promise<void> => {
+  const createMemory = async (text: string, customUserId?: string, metadata?: any): Promise<void> => {
     try {
       const memoryData = {
-        user_id: user_id,
+        user_id: customUserId || user_id,
         text: text,
         infer: false,
         app: "openmemory",
+        metadata: metadata || {},
       }
       await axios.post<ApiMemoryItem>(`${URL}/api/v1/memories/`, memoryData);
     } catch (err: any) {

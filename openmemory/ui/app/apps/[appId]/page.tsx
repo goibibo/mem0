@@ -51,7 +51,7 @@ export default function AppDetailsPage() {
 
   if (selectedApp.error) {
     return (
-      <NotFound message={selectedApp.error} title="Error loading app details" />
+      <NotFound message={selectedApp.error} title="Error loading client/agent details" />
     );
   }
 

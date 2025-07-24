@@ -26,36 +26,6 @@ export const constants = {
     icon: <Icon source="/images/cursor.png" />,
     iconImage: "/images/cursor.png",
   },
-  cline: {
-    name: "Cline",
-    icon: <Icon source="/images/cline.png" />,
-    iconImage: "/images/cline.png",
-  },
-  roocline: {
-    name: "Roo Cline",
-    icon: <Icon source="/images/roocline.png" />,
-    iconImage: "/images/roocline.png",
-  },
-  windsurf: {
-    name: "Windsurf",
-    icon: <Icon source="/images/windsurf.png" />,
-    iconImage: "/images/windsurf.png",
-  },
-  witsy: {
-    name: "Witsy",
-    icon: <Icon source="/images/witsy.png" />,
-    iconImage: "/images/witsy.png",
-  },
-  enconvo: {
-    name: "Enconvo",
-    icon: <Icon source="/images/enconvo.png" />,
-    iconImage: "/images/enconvo.png",
-  },
-  augment: {
-    name: "Augment",
-    icon: <Icon source="/images/augment.png" />,
-    iconImage: "/images/augment.png",
-  },
   default: {
     name: "Default",
     icon: <BiEdit size={18} className="ml-1" />,

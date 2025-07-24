@@ -37,7 +37,7 @@ import SourceApp from "@/components/shared/source-app";
 import { HiMiniRectangleStack } from "react-icons/hi2";
 import { PiSwatches } from "react-icons/pi";
 import { GoPackage } from "react-icons/go";
-import { CiCalendar } from "react-icons/ci";
+import { CiCalendar, CiUser } from "react-icons/ci";
 import { useRouter } from "next/navigation";
 import Categories from "@/components/shared/categories";
 import { useUI } from "@/hooks/useUI";
@@ -137,16 +137,28 @@ export function MemoryTable() {
                 Categories
               </div>
             </TableHead>
+            <TableHead className="w-[100px] border-zinc-700">
+              <div className="flex items-center">
+                <CiUser className="mr-1" size={16} />
+                User
+              </div>
+            </TableHead>
             <TableHead className="w-[140px] border-zinc-700">
               <div className="flex items-center">
                 <GoPackage className="mr-1" />
-                Source App
+                Source Client/Agent
               </div>
             </TableHead>
             <TableHead className="w-[140px] border-zinc-700">
               <div className="flex items-center w-full justify-center">
                 <CiCalendar className="mr-1" size={16} />
                 Created On
+              </div>
+            </TableHead>
+            <TableHead className="w-[180px] border-zinc-700">
+              <div className="flex items-center w-full justify-center">
+                <PiSwatches className="mr-1" size={16} />
+                Metadata
               </div>
             </TableHead>
             <TableHead className="text-right border-zinc-700 flex justify-center">
@@ -223,11 +235,34 @@ export function MemoryTable() {
                   />
                 </div>
               </TableCell>
+              <TableCell className="w-[100px] text-center">
+                <span className="text-zinc-300">{memory.user_id}</span>
+              </TableCell>
               <TableCell className="w-[140px] text-center">
                 <SourceApp source={memory.app_name} />
               </TableCell>
               <TableCell className="w-[140px] text-center">
                 {formatDate(memory.created_at)}
+              </TableCell>
+              <TableCell className="w-[180px] text-center">
+                {memory.metadata && Object.keys(memory.metadata).length > 0 ? (
+                  <TooltipProvider>
+                    <Tooltip delayDuration={0}>
+                      <TooltipTrigger asChild>
+                        <div className="truncate max-w-[150px] mx-auto text-zinc-400 text-sm font-mono cursor-help">
+                          {JSON.stringify(memory.metadata)}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[400px] bg-zinc-900 border-zinc-800">
+                        <pre className="text-xs font-mono text-zinc-300">
+                          {JSON.stringify(memory.metadata, null, 2)}
+                        </pre>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <span className="text-zinc-500 text-sm">-</span>
+                )}
               </TableCell>
               <TableCell className="text-right flex justify-center">
                 <DropdownMenu>

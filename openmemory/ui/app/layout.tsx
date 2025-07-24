@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Providers } from "./providers";
 
 export const metadata = {
-  title: "OpenMemory - Developer Dashboard",
+  title: "OpenMemory",
   description: "Manage your OpenMemory integration and stored memories",
   generator: "v0.dev",
 };

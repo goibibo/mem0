@@ -84,7 +84,8 @@ export const useAppsApi = (): UseAppsApiReturn => {
     try {
       const queryParams = new URLSearchParams({
         page: String(page),
-        page_size: String(page_size)
+        page_size: String(page_size),
+        show_by_user: 'false'  // Always show unique apps across all users
       });
 
       if (name) queryParams.append('name', name);

@@ -18,6 +18,7 @@ import { debounce } from "lodash";
 import { useEffect, useRef } from "react";
 import FilterComponent from "./FilterComponent";
 import { clearFilters } from "@/store/filtersSlice";
+import { SearchMemoriesDialog } from "./SearchMemoriesDialog";
 
 export function MemoryFilters() {
   const dispatch = useDispatch();
@@ -28,7 +29,6 @@ export function MemoryFilters() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeFilters = useSelector((state: RootState) => state.filters.apps);
-
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDeleteSelected = async () => {
@@ -64,7 +64,7 @@ export function MemoryFilters() {
     }
   };
 
-  // add debounce
+  // Debounced search for filtering UI results
   const handleSearch = debounce(async (query: string) => {
     router.push(`/memories?search=${query}`);
   }, 500);
@@ -77,78 +77,107 @@ export function MemoryFilters() {
         inputRef.current.focus();
       }
     }
-  }, []);
+  }, [searchParams]);
 
   const handleClearAllFilters = async () => {
     dispatch(clearFilters());
+    // Clear search param as well
+    router.push('/memories');
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
     await fetchMemories(); // Fetch memories without any filters
   };
 
   const hasActiveFilters =
     activeFilters.selectedApps.length > 0 ||
-    activeFilters.selectedCategories.length > 0;
+    activeFilters.selectedCategories.length > 0 ||
+    activeFilters.selectedUsers.length > 0 ||
+    Object.keys(activeFilters.metadataFilters || {}).length > 0 ||
+    activeFilters.showArchived ||
+    searchParams.get("search");
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 mb-4">
-      <div className="relative flex-1">
-        <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-        <Input
-          ref={inputRef}
-          placeholder="Search memories..."
-          className="pl-8 bg-zinc-950 border-zinc-800 max-w-[500px]"
-          onChange={(e) => handleSearch(e.target.value)}
-        />
+    <div className="flex flex-col gap-4 mb-4">
+      <div className="flex flex-col md:flex-row gap-4">
+        <div className="relative flex-1 max-w-[500px]">
+          <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+          <Input
+            ref={inputRef}
+            placeholder="Filter memories..."
+            className="pl-8 bg-zinc-950 border-zinc-800"
+            onChange={(e) => handleSearch(e.target.value)}
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <SearchMemoriesDialog />
+          <FilterComponent />
+          {hasActiveFilters && (
+            <Button
+              variant="outline"
+              className="bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+              onClick={handleClearAllFilters}
+            >
+              Clear All
+            </Button>
+          )}
+        </div>
       </div>
-      <div className="flex gap-2">
-        <FilterComponent />
-        {hasActiveFilters && (
-          <Button
-            variant="outline"
-            className="bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
-            onClick={handleClearAllFilters}
-          >
-            Clear Filters
-          </Button>
-        )}
-        {selectedMemoryIds.length > 0 && (
-          <>
+
+      {selectedMemoryIds.length > 0 && (
+        <div className="flex items-center gap-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-800">
+          <span className="text-sm text-zinc-400">
+            {selectedMemoryIds.length} selected
+          </span>
+          <div className="flex gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
-                  variant="outline"
-                  className="border-zinc-700/50 bg-zinc-900 hover:bg-zinc-800"
+                  size="sm"
+                  variant="ghost"
+                  className="text-zinc-400 hover:text-zinc-300"
                 >
-                  Actions
+                  <Pause className="h-4 w-4 mr-1" />
+                  State
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                className="bg-zinc-900 border-zinc-800"
-              >
-                <DropdownMenuItem onClick={handleArchiveSelected}>
-                  <Archive className="mr-2 h-4 w-4" />
-                  Archive Selected
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handlePauseSelected}>
-                  <Pause className="mr-2 h-4 w-4" />
-                  Pause Selected
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleResumeSelected}>
-                  <Play className="mr-2 h-4 w-4" />
-                  Resume Selected
+              <DropdownMenuContent className="bg-zinc-900 border-zinc-800">
+                <DropdownMenuItem
+                  onClick={handlePauseSelected}
+                  className="cursor-pointer"
+                >
+                  <Pause className="h-4 w-4 mr-2" />
+                  Pause
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={handleDeleteSelected}
-                  className="text-red-500"
+                  onClick={handleResumeSelected}
+                  className="cursor-pointer"
                 >
-                  <FiTrash2 className="mr-2 h-4 w-4" />
-                  Delete Selected
+                  <Play className="h-4 w-4 mr-2" />
+                  Resume
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleArchiveSelected}
+                  className="cursor-pointer"
+                >
+                  <Archive className="h-4 w-4 mr-2" />
+                  Archive
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </>
-        )}
-      </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleDeleteSelected}
+              className="text-red-400 hover:text-red-300"
+            >
+              <FiTrash2 className="h-4 w-4 mr-1" />
+              Delete
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

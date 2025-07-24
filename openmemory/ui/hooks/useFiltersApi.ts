@@ -38,9 +38,11 @@ export const useFiltersApi = (): UseFiltersApiReturn => {
     setIsLoading(true);
     dispatch(setCategoriesLoading());
     try {
+      console.log('useFiltersApi: Fetching categories from:', `${URL}/api/v1/memories/categories`);
       const response = await axios.get<CategoriesResponse>(
-        `${URL}/api/v1/memories/categories?user_id=${user_id}`
+        `${URL}/api/v1/memories/categories`
       );
+      console.log('useFiltersApi: Categories response:', response.data);
 
       dispatch(setCategoriesSuccess({
         categories: response.data.categories,
@@ -48,6 +50,7 @@ export const useFiltersApi = (): UseFiltersApiReturn => {
       }));
       setIsLoading(false);
     } catch (err: any) {
+      console.error('useFiltersApi: Error fetching categories:', err);
       const errorMessage = err.message || 'Failed to fetch categories';
       setError(errorMessage);
       dispatch(setCategoriesError(errorMessage));

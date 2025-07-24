@@ -25,37 +25,76 @@ async def list_apps(
     sort_direction: str = 'asc',
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    show_by_user: bool = Query(False, description="If true, show apps per user. If false, show unique apps across all users")
 ):
-    # Create a subquery for memory counts
-    memory_counts = db.query(
-        Memory.app_id,
-        func.count(Memory.id).label('memory_count')
-    ).filter(
-        Memory.state.in_([MemoryState.active, MemoryState.paused, MemoryState.archived])
-    ).group_by(Memory.app_id).subquery()
+    if show_by_user:
+        # Original behavior - show apps per user
+        # Create a subquery for memory counts
+        memory_counts = db.query(
+            Memory.app_id,
+            func.count(Memory.id).label('memory_count')
+        ).filter(
+            Memory.state.in_([MemoryState.active, MemoryState.paused, MemoryState.archived])
+        ).group_by(Memory.app_id).subquery()
 
-    # Create a subquery for access counts
-    access_counts = db.query(
-        MemoryAccessLog.app_id,
-        func.count(func.distinct(MemoryAccessLog.memory_id)).label('access_count')
-    ).group_by(MemoryAccessLog.app_id).subquery()
+        # Create a subquery for access counts
+        access_counts = db.query(
+            MemoryAccessLog.app_id,
+            func.count(func.distinct(MemoryAccessLog.memory_id)).label('access_count')
+        ).group_by(MemoryAccessLog.app_id).subquery()
 
-    # Base query
-    query = db.query(
-        App,
-        func.coalesce(memory_counts.c.memory_count, 0).label('total_memories_created'),
-        func.coalesce(access_counts.c.access_count, 0).label('total_memories_accessed')
-    )
+        # Base query
+        query = db.query(
+            App,
+            func.coalesce(memory_counts.c.memory_count, 0).label('total_memories_created'),
+            func.coalesce(access_counts.c.access_count, 0).label('total_memories_accessed')
+        )
 
-    # Join with subqueries
-    query = query.outerjoin(
-        memory_counts,
-        App.id == memory_counts.c.app_id
-    ).outerjoin(
-        access_counts,
-        App.id == access_counts.c.app_id
-    )
+        # Join with subqueries
+        query = query.outerjoin(
+            memory_counts,
+            App.id == memory_counts.c.app_id
+        ).outerjoin(
+            access_counts,
+            App.id == access_counts.c.app_id
+        )
+    else:
+        # New behavior - show unique apps across all users
+        # Aggregate by app name
+        memory_counts = db.query(
+            App.name,
+            func.count(func.distinct(Memory.id)).label('memory_count')
+        ).join(
+            Memory, App.id == Memory.app_id
+        ).filter(
+            Memory.state.in_([MemoryState.active, MemoryState.paused, MemoryState.archived])
+        ).group_by(App.name).subquery()
+
+        access_counts = db.query(
+            App.name,
+            func.count(func.distinct(MemoryAccessLog.memory_id)).label('access_count')
+        ).join(
+            MemoryAccessLog, App.id == MemoryAccessLog.app_id
+        ).group_by(App.name).subquery()
+
+        # Get the first app for each name (we'll use this for display)
+        subquery = db.query(
+            App.name,
+            func.min(App.id).label('app_id')
+        ).group_by(App.name).subquery()
+
+        query = db.query(
+            App,
+            func.coalesce(memory_counts.c.memory_count, 0).label('total_memories_created'),
+            func.coalesce(access_counts.c.access_count, 0).label('total_memories_accessed')
+        ).join(
+            subquery, App.id == subquery.c.app_id
+        ).outerjoin(
+            memory_counts, App.name == memory_counts.c.name
+        ).outerjoin(
+            access_counts, App.name == access_counts.c.name
+        )
 
     if name:
         query = query.filter(App.name.ilike(f"%{name}%"))

@@ -8,6 +8,8 @@ import { PageSizeSelector } from "./PageSizeSelector";
 import { useMemoriesApi } from "@/hooks/useMemoriesApi";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MemoryTableSkeleton } from "@/skeleton/MemoryTableSkeleton";
+import { useSelector } from "react-redux";
+import { RootState } from "@/store/store";
 
 export function MemoriesSection() {
   const router = useRouter();
@@ -17,6 +19,7 @@ export function MemoriesSection() {
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const filters = useSelector((state: RootState) => state.filters.apps);
 
   const currentPage = Number(searchParams.get("page")) || 1;
   const itemsPerPage = Number(searchParams.get("size")) || 10;
@@ -25,27 +28,36 @@ export function MemoriesSection() {
   );
   const [selectedClient, setSelectedClient] = useState<Client | "all">("all");
 
-  useEffect(() => {
-    const loadMemories = async () => {
-      setIsLoading(true);
-      try {
-        const searchQuery = searchParams.get("search") || "";
-        const result = await fetchMemories(
-          searchQuery,
-          currentPage,
-          itemsPerPage
-        );
-        setMemories(result.memories);
-        setTotalItems(result.total);
-        setTotalPages(result.pages);
-      } catch (error) {
-        console.error("Failed to fetch memories:", error);
-      }
-      setIsLoading(false);
-    };
+  const loadMemories = async () => {
+    setIsLoading(true);
+    try {
+      const searchQuery = searchParams.get("search") || "";
+      const result = await fetchMemories(
+        searchQuery,
+        currentPage,
+        itemsPerPage,
+        {
+          apps: filters.selectedApps,
+          categories: filters.selectedCategories,
+          users: filters.selectedUsers,
+          metadata: filters.metadataFilters,
+          sortColumn: filters.sortColumn,
+          sortDirection: filters.sortDirection,
+          showArchived: filters.showArchived
+        }
+      );
+      setMemories(result.memories);
+      setTotalItems(result.total);
+      setTotalPages(result.pages);
+    } catch (error) {
+      console.error("Failed to fetch memories:", error);
+    }
+    setIsLoading(false);
+  };
 
+  useEffect(() => {
     loadMemories();
-  }, [currentPage, itemsPerPage, fetchMemories, searchParams]);
+  }, [currentPage, itemsPerPage, searchParams, filters]);
 
   const setCurrentPage = (page: number) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -135,7 +147,7 @@ export function MemoriesSection() {
                 Clear Filters
               </Button>
             ) : (
-              <CreateMemoryDialog />
+              <CreateMemoryDialog onMemoryCreated={loadMemories} />
             )}
           </div>
         )}

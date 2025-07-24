@@ -7,7 +7,6 @@ from app.database import Base
 from app.utils.categorization import get_categories_for_memory
 from sqlalchemy import (
     JSON,
-    UUID,
     Boolean,
     Column,
     DateTime,
@@ -17,9 +16,42 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
+    Text,
     event,
 )
+from sqlalchemy.dialects.mysql import CHAR
 from sqlalchemy.orm import Session, relationship
+from sqlalchemy.types import TypeDecorator, CHAR as SA_CHAR
+
+
+class UUID(TypeDecorator):
+    """Platform-independent UUID type.
+    
+    Uses CHAR(36) for MySQL, storing as a string.
+    """
+    impl = SA_CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'mysql':
+            return dialect.type_descriptor(CHAR(36))
+        else:
+            # For SQLite and others, use CHAR(36)
+            return dialect.type_descriptor(SA_CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif isinstance(value, uuid.UUID):
+            return str(value)
+        else:
+            return str(uuid.UUID(value))
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        else:
+            return uuid.UUID(value)
 
 
 def get_current_utc_time():
@@ -36,10 +68,10 @@ class MemoryState(enum.Enum):
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    user_id = Column(String, nullable=False, unique=True, index=True)
-    name = Column(String, nullable=True, index=True)
-    email = Column(String, unique=True, nullable=True, index=True)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    user_id = Column(String(255), nullable=False, unique=True, index=True)
+    name = Column(String(255), nullable=True, index=True)
+    email = Column(String(255), unique=True, nullable=True, index=True)
     metadata_ = Column('metadata', JSON, default=dict)
     created_at = Column(DateTime, default=get_current_utc_time, index=True)
     updated_at = Column(DateTime,
@@ -52,10 +84,10 @@ class User(Base):
 
 class App(Base):
     __tablename__ = "apps"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    owner_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String, nullable=False, index=True)
-    description = Column(String)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    owner_id = Column(UUID(), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    description = Column(Text)
     metadata_ = Column('metadata', JSON, default=dict)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=get_current_utc_time, index=True)
@@ -73,8 +105,8 @@ class App(Base):
 
 class Config(Base):
     __tablename__ = "configs"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    key = Column(String, unique=True, nullable=False, index=True)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    key = Column(String(255), unique=True, nullable=False, index=True)
     value = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=get_current_utc_time)
     updated_at = Column(DateTime,
@@ -84,11 +116,11 @@ class Config(Base):
 
 class Memory(Base):
     __tablename__ = "memories"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
-    app_id = Column(UUID, ForeignKey("apps.id"), nullable=False, index=True)
-    content = Column(String, nullable=False)
-    vector = Column(String)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    user_id = Column(UUID(), ForeignKey("users.id"), nullable=False, index=True)
+    app_id = Column(UUID(), ForeignKey("apps.id"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    vector = Column(Text)
     metadata_ = Column('metadata', JSON, default=dict)
     state = Column(Enum(MemoryState), default=MemoryState.active, index=True)
     created_at = Column(DateTime, default=get_current_utc_time, index=True)
@@ -111,9 +143,9 @@ class Memory(Base):
 
 class Category(Base):
     __tablename__ = "categories"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    name = Column(String, unique=True, nullable=False, index=True)
-    description = Column(String)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    description = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.UTC), index=True)
     updated_at = Column(DateTime,
                         default=get_current_utc_time,
@@ -123,20 +155,20 @@ class Category(Base):
 
 memory_categories = Table(
     "memory_categories", Base.metadata,
-    Column("memory_id", UUID, ForeignKey("memories.id"), primary_key=True, index=True),
-    Column("category_id", UUID, ForeignKey("categories.id"), primary_key=True, index=True),
+    Column("memory_id", UUID(), ForeignKey("memories.id"), primary_key=True, index=True),
+    Column("category_id", UUID(), ForeignKey("categories.id"), primary_key=True, index=True),
     Index('idx_memory_category', 'memory_id', 'category_id')
 )
 
 
 class AccessControl(Base):
     __tablename__ = "access_controls"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    subject_type = Column(String, nullable=False, index=True)
-    subject_id = Column(UUID, nullable=True, index=True)
-    object_type = Column(String, nullable=False, index=True)
-    object_id = Column(UUID, nullable=True, index=True)
-    effect = Column(String, nullable=False, index=True)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    subject_type = Column(String(50), nullable=False, index=True)
+    subject_id = Column(UUID(), nullable=True, index=True)
+    object_type = Column(String(50), nullable=False, index=True)
+    object_id = Column(UUID(), nullable=True, index=True)
+    effect = Column(String(20), nullable=False, index=True)
     created_at = Column(DateTime, default=get_current_utc_time, index=True)
 
     __table_args__ = (
@@ -147,9 +179,9 @@ class AccessControl(Base):
 
 class ArchivePolicy(Base):
     __tablename__ = "archive_policies"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    criteria_type = Column(String, nullable=False, index=True)
-    criteria_id = Column(UUID, nullable=True, index=True)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    criteria_type = Column(String(50), nullable=False, index=True)
+    criteria_id = Column(UUID(), nullable=True, index=True)
     days_to_archive = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=get_current_utc_time, index=True)
 
@@ -160,9 +192,9 @@ class ArchivePolicy(Base):
 
 class MemoryStatusHistory(Base):
     __tablename__ = "memory_status_history"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    memory_id = Column(UUID, ForeignKey("memories.id"), nullable=False, index=True)
-    changed_by = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    memory_id = Column(UUID(), ForeignKey("memories.id"), nullable=False, index=True)
+    changed_by = Column(UUID(), ForeignKey("users.id"), nullable=False, index=True)
     old_state = Column(Enum(MemoryState), nullable=False, index=True)
     new_state = Column(Enum(MemoryState), nullable=False, index=True)
     changed_at = Column(DateTime, default=get_current_utc_time, index=True)
@@ -175,11 +207,11 @@ class MemoryStatusHistory(Base):
 
 class MemoryAccessLog(Base):
     __tablename__ = "memory_access_logs"
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
-    memory_id = Column(UUID, ForeignKey("memories.id"), nullable=False, index=True)
-    app_id = Column(UUID, ForeignKey("apps.id"), nullable=False, index=True)
+    id = Column(UUID(), primary_key=True, default=lambda: uuid.uuid4())
+    memory_id = Column(UUID(), ForeignKey("memories.id"), nullable=False, index=True)
+    app_id = Column(UUID(), ForeignKey("apps.id"), nullable=False, index=True)
     accessed_at = Column(DateTime, default=get_current_utc_time, index=True)
-    access_type = Column(String, nullable=False, index=True)
+    access_type = Column(String(50), nullable=False, index=True)
     metadata_ = Column('metadata', JSON, default=dict)
 
     __table_args__ = (
