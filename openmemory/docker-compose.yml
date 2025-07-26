@@ -37,12 +37,13 @@ services:
     build: api/
     environment:
       - USER
-      - API_KEY
+      - OPENAI_API_KEY
       - MYSQL_HOST
       - MYSQL_PORT
       - MYSQL_USER
       - MYSQL_PASSWORD
       - MYSQL_DATABASE
+      - QDRANT_HOST
     env_file:
       - api/.env
     depends_on:
@@ -65,8 +66,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-      - NEXT_PUBLIC_USER_ID=${USER}
+      - NEXT_PUBLIC_API_URL
+      - NEXT_PUBLIC_USER_ID
 
 volumes:
   mem0_storage:

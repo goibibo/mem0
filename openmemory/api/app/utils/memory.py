@@ -140,7 +140,7 @@ def get_default_memory_config():
             "provider": "qdrant",
             "config": {
                 "collection_name": "openmemory",
-                "host": "mem0_store",
+                "host": "env:QDRANT_HOST",
                 "port": 6333,
             }
         },
