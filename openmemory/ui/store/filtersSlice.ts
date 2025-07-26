@@ -11,6 +11,7 @@ export interface Category {
 export interface FiltersState {
   apps: {
     selectedApps: string[];
+    selectedAppNames: string[]; // Add app names for filtering
     selectedCategories: string[];
     selectedUsers: string[];
     metadataFilters: Record<string, string>;
@@ -29,6 +30,7 @@ export interface FiltersState {
 const initialState: FiltersState = {
   apps: {
     selectedApps: [],
+    selectedAppNames: [], // Initialize app names array
     selectedCategories: [],
     selectedUsers: [],
     metadataFilters: {},
@@ -65,6 +67,9 @@ const filtersSlice = createSlice({
     setSelectedApps: (state, action: PayloadAction<string[]>) => {
       state.apps.selectedApps = action.payload;
     },
+    setSelectedAppNames: (state, action: PayloadAction<string[]>) => {
+      state.apps.selectedAppNames = action.payload;
+    },
     setSelectedCategories: (state, action: PayloadAction<string[]>) => {
       state.apps.selectedCategories = action.payload;
     },
@@ -91,6 +96,7 @@ const filtersSlice = createSlice({
     },
     clearFilters: (state) => {
       state.apps.selectedApps = [];
+      state.apps.selectedAppNames = [];
       state.apps.selectedCategories = [];
       state.apps.selectedUsers = [];
       state.apps.metadataFilters = {};
@@ -108,6 +114,7 @@ export const {
   setCategoriesSuccess,
   setCategoriesError,
   setSelectedApps,
+  setSelectedAppNames,
   setSelectedCategories,
   setSelectedUsers,
   setShowArchived,

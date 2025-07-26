@@ -76,8 +76,10 @@ interface UseMemoriesApiReturn {
     size?: number,
     filters?: {
       apps?: string[];
+      app_names?: string[]; // Add app_names to the interface
       categories?: string[];
       users?: string[];
+      metadata?: Record<string, string>;
       sortColumn?: string;
       sortDirection?: 'asc' | 'desc';
       showArchived?: boolean;
@@ -114,6 +116,7 @@ export const useMemoriesApi = (): UseMemoriesApiReturn => {
     size: number = 10,
     filters?: {
       apps?: string[];
+      app_names?: string[]; // Add support for app names
       categories?: string[];
       users?: string[];
       metadata?: Record<string, string>;
@@ -134,6 +137,7 @@ export const useMemoriesApi = (): UseMemoriesApiReturn => {
         size: size,
         search_query: query || undefined,
         app_ids: filters?.apps && filters.apps.length > 0 ? filters.apps : undefined,
+        app_names: filters?.app_names && filters.app_names.length > 0 ? filters.app_names : undefined, // Add app_names
         category_ids: filters?.categories && filters.categories.length > 0 ? filters.categories : undefined,
         sort_column: filters?.sortColumn?.toLowerCase() || undefined,
         sort_direction: filters?.sortDirection || undefined,
@@ -141,13 +145,27 @@ export const useMemoriesApi = (): UseMemoriesApiReturn => {
         metadata_filters: filters?.metadata && Object.keys(filters.metadata).length > 0 ? filters.metadata : undefined
       };
       
+      console.log("=== FRONTEND DEBUG ===");
       console.log("Fetching memories with filters:", requestBody);
-      console.log("Metadata filters specifically:", filters?.metadata);
+      console.log("App IDs being sent:", requestBody.app_ids);
+      console.log("App names being sent:", requestBody.app_names);
+      console.log("User IDs being sent:", requestBody.user_ids);
+      console.log("Category IDs being sent:", requestBody.category_ids);
+      console.log("Show archived:", requestBody.show_archived);
+      console.log("Metadata filters:", requestBody.metadata_filters);
+      console.log("======================");
       
       const response = await axios.post<ApiResponse>(
         `${URL}/api/v1/memories/filter`,
         requestBody
       );
+
+      console.log("=== RESPONSE DEBUG ===");
+      console.log("Response status:", response.status);
+      console.log("Response data:", response.data);
+      console.log("Total memories returned:", response.data.total);
+      console.log("Memories returned:", response.data.items.length);
+      console.log("======================");
 
       const adaptedMemories: Memory[] = response.data.items.map((item: ApiMemoryItem) => ({
         id: item.id,

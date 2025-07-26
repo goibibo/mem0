@@ -1,44 +1,60 @@
+"use client";
+
 import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Category, Client } from "../../../components/types";
-import { MemoryTable } from "./MemoryTable";
-import { MemoryPagination } from "./MemoryPagination";
-import { CreateMemoryDialog } from "./CreateMemoryDialog";
-import { PageSizeSelector } from "./PageSizeSelector";
-import { useMemoriesApi } from "@/hooks/useMemoriesApi";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MemoryTableSkeleton } from "@/skeleton/MemoryTableSkeleton";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store/store";
+import { useMemoriesApi } from "@/hooks/useMemoriesApi";
+import { MemoryTable } from "./MemoryTable";
+import { MemoryTableSkeleton } from "@/skeleton/MemoryTableSkeleton";
+import { MemoryPagination } from "./MemoryPagination";
+import { PageSizeSelector } from "./PageSizeSelector";
 
 export function MemoriesSection() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { fetchMemories } = useMemoriesApi();
-  const [memories, setMemories] = useState<any[]>([]);
-  const [totalItems, setTotalItems] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [isLoading, setIsLoading] = useState(true);
   const filters = useSelector((state: RootState) => state.filters.apps);
+  const categories = useSelector((state: RootState) => state.filters.categories.items);
+  const semanticSearch = useSelector((state: RootState) => state.memories.semanticSearch);
+  
+  const [memories, setMemories] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  const currentPage = Number(searchParams.get("page")) || 1;
-  const itemsPerPage = Number(searchParams.get("size")) || 10;
-  const [selectedCategory, setSelectedCategory] = useState<Category | "all">(
-    "all"
-  );
-  const [selectedClient, setSelectedClient] = useState<Client | "all">("all");
+  useEffect(() => {
+    const page = parseInt(searchParams.get("page") || "1");
+    const size = parseInt(searchParams.get("size") || "10");
+    setCurrentPage(page);
+    setItemsPerPage(size);
+  }, [searchParams]);
 
   const loadMemories = async () => {
+    // Don't load memories if semantic search is active - let semantic search results stay
+    if (semanticSearch.active) {
+      console.log("Semantic search is active, skipping loadMemories to preserve search results");
+      return;
+    }
+
     setIsLoading(true);
     try {
       const searchQuery = searchParams.get("search") || "";
+      
+      // Get category IDs for selected category names
+      const selectedCategoryIds = categories
+        .filter((cat: any) => filters.selectedCategories.includes(cat.name))
+        .map((cat: any) => cat.id);
+      
       const result = await fetchMemories(
         searchQuery,
         currentPage,
         itemsPerPage,
         {
-          apps: filters.selectedApps,
-          categories: filters.selectedCategories,
+          app_names: filters.selectedAppNames, // Use app names from Redux state
+          categories: selectedCategoryIds,
           users: filters.selectedUsers,
           metadata: filters.metadataFilters,
           sortColumn: filters.sortColumn,
@@ -57,9 +73,9 @@ export function MemoriesSection() {
 
   useEffect(() => {
     loadMemories();
-  }, [currentPage, itemsPerPage, searchParams, filters]);
+  }, [currentPage, itemsPerPage, searchParams, filters, semanticSearch.active]);
 
-  const setCurrentPage = (page: number) => {
+  const handlePageChange = (page: number) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("page", page.toString());
     params.set("size", itemsPerPage.toString());
@@ -105,7 +121,7 @@ export function MemoriesSection() {
               <MemoryPagination
                 currentPage={currentPage}
                 totalPages={totalPages}
-                setCurrentPage={setCurrentPage}
+                setCurrentPage={handlePageChange}
               />
             </div>
           </>
@@ -127,28 +143,16 @@ export function MemoriesSection() {
                 <path d="M21 9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"></path>
                 <path d="M16 2v6h6"></path>
                 <path d="M12 18v-6"></path>
-                <path d="M9 15h6"></path>
+                <path d="M8 15h8"></path>
               </svg>
             </div>
-            <h3 className="text-lg font-medium">No memories found</h3>
-            <p className="text-zinc-400 mt-1 mb-4">
-              {selectedCategory !== "all" || selectedClient !== "all"
-                ? "Try adjusting your filters"
-                : "Create your first memory to see it here"}
+            <h3 className="text-lg font-medium text-zinc-200 mb-2">No memories found</h3>
+            <p className="text-zinc-400">
+              {searchParams.get("search") 
+                ? `No memories match your search "${searchParams.get("search")}"`
+                : "No memories have been created yet."
+              }
             </p>
-            {selectedCategory !== "all" || selectedClient !== "all" ? (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSelectedCategory("all");
-                  setSelectedClient("all");
-                }}
-              >
-                Clear Filters
-              </Button>
-            ) : (
-              <CreateMemoryDialog onMemoryCreated={loadMemories} />
-            )}
           </div>
         )}
       </div>

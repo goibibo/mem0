@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button";
 import { HiMiniRectangleStack } from "react-icons/hi2";
-import { FiRefreshCcw } from "react-icons/fi";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CreateMemoryDialog } from "@/app/memories/components/CreateMemoryDialog";
@@ -75,11 +74,6 @@ export function Navbar() {
     return [];
   };
 
-  const handleRefresh = async () => {
-    const fetchers = getFetchersForPath(pathname);
-    await Promise.allSettled(fetchers.map((fn) => fn()));
-  };
-
   const isActive = (href: string) => {
     if (href === "/") return pathname === href;
     return pathname.startsWith(href.substring(0, 5));
@@ -110,15 +104,6 @@ export function Navbar() {
           </Link>
         </div>
         <div className="flex items-center gap-4">
-          <Button
-            onClick={handleRefresh}
-            variant="outline"
-            size="sm"
-            className="border-zinc-700/50 bg-zinc-900 hover:bg-zinc-800"
-          >
-            <FiRefreshCcw className="transition-transform duration-300 group-hover:rotate-180" />
-            Refresh
-          </Button>
           <CreateMemoryDialog 
             onMemoryCreated={() => {
               // Navigate to memories page if not already there

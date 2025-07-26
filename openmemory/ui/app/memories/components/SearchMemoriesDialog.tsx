@@ -32,6 +32,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { RootState } from "@/store/store";
 import { setSemanticSearch, clearSemanticSearch } from "@/store/memoriesSlice";
+import { useMemoriesApi } from "@/hooks/useMemoriesApi";
+import { clearFilters } from "@/store/filtersSlice";
+import { AlertTriangle } from "lucide-react";
 
 interface SearchMemoriesDialogProps {
   onSearchComplete?: () => void;
@@ -42,7 +45,7 @@ export function SearchMemoriesDialog({ onSearchComplete }: SearchMemoriesDialogP
   const [query, setQuery] = useState("");
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
-  const [threshold, setThreshold] = useState<number>(0);
+  const [threshold, setThreshold] = useState<number>(0.3); // Changed from 0 to 0.3 for better relevance
   const [limit, setLimit] = useState<number>(10);
   const [isLoading, setIsLoading] = useState(false);
   const [selectAllUsers, setSelectAllUsers] = useState(true);
@@ -50,11 +53,21 @@ export function SearchMemoriesDialog({ onSearchComplete }: SearchMemoriesDialogP
   
   const { fetchUsers, users } = useUsersApi();
   const { fetchApps } = useAppsApi();
+  const { fetchMemories } = useMemoriesApi();
   const apps = useSelector((state: RootState) => state.apps.apps);
+  const activeFilters = useSelector((state: RootState) => state.filters.apps);
   const dispatch = useDispatch();
   const semanticSearch = useSelector((state: RootState) => state.memories.semanticSearch);
   
   const URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8765";
+
+  // Check if there are active filters
+  const hasActiveFilters = 
+    activeFilters.selectedApps.length > 0 ||
+    activeFilters.selectedCategories.length > 0 ||
+    activeFilters.selectedUsers.length > 0 ||
+    Object.keys(activeFilters.metadataFilters || {}).length > 0 ||
+    activeFilters.showArchived;
 
   useEffect(() => {
     if (open) {
@@ -78,14 +91,18 @@ export function SearchMemoriesDialog({ onSearchComplete }: SearchMemoriesDialogP
         include_metadata: true
       };
 
-      // Only include user_ids if specific users are selected
+      // Include user_ids if specific users are selected
       if (!selectAllUsers && selectedUsers.length > 0) {
         requestBody.user_ids = selectedUsers;
       }
 
-      // Only include app_ids if specific apps are selected
+      // Include app_names if specific apps are selected
       if (!selectAllApps && selectedApps.length > 0) {
-        requestBody.app_ids = selectedApps;
+        // Get app names for selected app IDs
+        const selectedAppNames = apps
+          .filter((app: any) => selectedApps.includes(app.id))
+          .map((app: any) => app.name);
+        requestBody.app_names = selectedAppNames;
       }
 
       console.log("Searching memories with:", requestBody);
@@ -106,8 +123,21 @@ export function SearchMemoriesDialog({ onSearchComplete }: SearchMemoriesDialogP
         user_id: item.user_id
       }));
 
-      dispatch(setMemoriesSuccess(memories));
+      console.log("=== SEMANTIC SEARCH DEBUG ===");
+      console.log("Query:", query);
+      console.log("Threshold:", threshold);
+      console.log("Selected Users:", selectedUsers);
+      console.log("Selected Apps:", selectedApps);
+      console.log("Raw response:", response.data);
+      console.log("Processed memories:", memories);
+      console.log("Memory contents:", memories.map(m => m.memory));
+      console.log("Relevance scores:", memories.map(m => m.metadata?.relevance_score));
+      console.log("=============================");
+
+      // Set semantic search results without clearing filters
       dispatch(setSemanticSearch({ query }));
+      dispatch(setMemoriesSuccess(memories));
+      
       toast.success(`Found ${memories.length} memories`);
       setOpen(false);
       
@@ -126,36 +156,23 @@ export function SearchMemoriesDialog({ onSearchComplete }: SearchMemoriesDialogP
     setQuery("");
     setSelectedUsers([]);
     setSelectedApps([]);
-    setThreshold(0);
+    setThreshold(0.3); // Reset to 0.3 instead of 0
     setLimit(10);
     setSelectAllUsers(true);
     setSelectAllApps(true);
+    // Don't clear filters when resetting search parameters
   };
 
-  const handleClearSearch = () => {
+  const handleClearSearch = async () => {
     dispatch(clearSemanticSearch());
-    // Fetch all memories again
-    const fetchMemories = async () => {
-      try {
-        const response = await axios.get(`${URL}/api/v1/memories`);
-        const memories = response.data.map((item: any) => ({
-          id: item.id,
-          memory: item.content,
-          created_at: new Date(item.created_at).getTime(),
-          state: item.state,
-          metadata: item.metadata_,
-          categories: item.categories,
-          app_name: item.app_name,
-          user_id: item.user_id
-        }));
-        dispatch(setMemoriesSuccess(memories));
-        toast.success('Cleared semantic search');
-      } catch (error: any) {
-        console.error("Error fetching memories:", error);
-        toast.error("Failed to clear semantic search");
-      }
-    };
-    fetchMemories();
+    // Fetch all memories again using the API hook
+    try {
+      await fetchMemories();
+      toast.success('Cleared semantic search');
+    } catch (error: any) {
+      console.error("Error fetching memories:", error);
+      toast.error("Failed to clear semantic search");
+    }
   };
 
   return (
@@ -170,14 +187,26 @@ export function SearchMemoriesDialog({ onSearchComplete }: SearchMemoriesDialogP
             Semantic Search
           </Button>
         </DialogTrigger>
-        <DialogContent className="sm:max-w-[600px] bg-zinc-900 border-zinc-800 text-zinc-100">
+        <DialogContent className="sm:max-w-[600px] bg-zinc-900 border-zinc-800 text-zinc-100 max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-zinc-100">Search Memories</DialogTitle>
+            <DialogTitle className="text-zinc-100">Semantic Search</DialogTitle>
             <DialogDescription className="text-zinc-400">
-              Use natural language to search through memories with advanced filters.
+              Search memories using natural language queries
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          
+          {hasActiveFilters && (
+            <div className="mb-4 p-3 bg-yellow-900/20 border border-yellow-700/50 rounded-md">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                <span className="text-sm text-yellow-300">
+                  Active filters will be cleared when performing semantic search
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor="query">Search Query</Label>
               <Textarea
@@ -344,7 +373,9 @@ export function SearchMemoriesDialog({ onSearchComplete }: SearchMemoriesDialogP
                   onChange={(e) => setThreshold(parseFloat(e.target.value))}
                   className="bg-zinc-950 border-zinc-800"
                 />
-                <p className="text-xs text-zinc-500">0 = all results, 1 = exact match</p>
+                <p className="text-xs text-zinc-500">
+                  0 = all results, 0.3 = good relevance, 0.7 = high relevance, 1 = exact match
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="limit">Max Results</Label>

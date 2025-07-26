@@ -1,8 +1,10 @@
 "use client";
 
+import type { App, Category, User } from "@/types";
 import { useEffect, useState } from "react";
-import { Filter, X, ChevronDown, SortAsc, SortDesc } from "lucide-react";
+import { Filter, X, ChevronDown, SortAsc, SortDesc, AlertTriangle } from "lucide-react";
 import { useDispatch, useSelector } from "react-redux";
+import { cn } from "@/lib/utils";
 
 import {
   Dialog,
@@ -30,15 +32,37 @@ import { useAppsApi } from "@/hooks/useAppsApi";
 import { useFiltersApi } from "@/hooks/useFiltersApi";
 import {
   setSelectedApps,
+  setSelectedAppNames,
   setSelectedCategories,
   setSelectedUsers,
   setMetadataFilters,
   setShowArchived,
   clearFilters,
 } from "@/store/filtersSlice";
+import { clearSemanticSearch } from "@/store/memoriesSlice";
 import { useMemoriesApi } from "@/hooks/useMemoriesApi";
 import { useUsersApi } from "@/hooks/useUsersApi";
 import { Input } from "@/components/ui/input";
+
+interface FilterState {
+  selectedApps: string[];
+  selectedCategories: string[];
+  selectedUsers: string[];
+  metadataFilters: Record<string, string>;
+  showArchived: boolean;
+  sortColumn?: string;
+  sortDirection?: "asc" | "desc";
+}
+
+interface MemoryFilters {
+  apps?: string[];
+  categories?: string[];
+  users?: string[];
+  metadata?: Record<string, string>;
+  sortColumn?: string;
+  sortDirection?: "asc" | "desc";
+  showArchived?: boolean;
+}
 
 const columns = [
   {
@@ -63,6 +87,7 @@ export default function FilterComponent() {
   const { fetchUsers, users } = useUsersApi();
   const [isOpen, setIsOpen] = useState(false);
   const [tempSelectedApps, setTempSelectedApps] = useState<string[]>([]);
+  const [tempSelectedAppNames, setTempSelectedAppNames] = useState<string[]>([]); // Store app names for filtering
   const [tempSelectedCategories, setTempSelectedCategories] = useState<string[]>([]);
   const [tempSelectedUsers, setTempSelectedUsers] = useState<string[]>([]);
   const [showArchived, setShowArchived] = useState(false);
@@ -70,11 +95,76 @@ export default function FilterComponent() {
   const [metadataValue, setMetadataValue] = useState("");
   const [metadataFilters, setMetadataFilters] = useState<Record<string, string>>({});
 
-  const apps = useSelector((state: RootState) => state.apps.apps);
+  const apps = useSelector((state: RootState) => state.apps.apps) as App[];
   const categories = useSelector(
     (state: RootState) => state.filters.categories.items
-  );
+  ) as Category[];
   const filters = useSelector((state: RootState) => state.filters.apps);
+  const semanticSearch = useSelector((state: RootState) => state.memories.semanticSearch);
+
+  const toggleAllApps = (checked: boolean) => {
+    if (checked) {
+      const allAppNames = apps.map(app => app.name);
+      setTempSelectedApps(apps.map(app => app.id));
+      setTempSelectedAppNames(allAppNames);
+    } else {
+      setTempSelectedApps([]);
+      setTempSelectedAppNames([]);
+    }
+    // Clear semantic search when filters are changed
+    dispatch(clearSemanticSearch());
+  };
+
+  const toggleAppFilter = (appId: string) => {
+    const app = apps.find(a => a.id === appId);
+    if (!app) return;
+    
+    setTempSelectedApps(prev => 
+      prev.includes(appId) 
+        ? prev.filter(id => id !== appId)
+        : [...prev, appId]
+    );
+    
+    setTempSelectedAppNames(prev => 
+      prev.includes(app.name) 
+        ? prev.filter(name => name !== app.name)
+        : [...prev, app.name]
+    );
+    // Clear semantic search when filters are changed
+    dispatch(clearSemanticSearch());
+  };
+
+  const toggleAllCategories = (checked: boolean) => {
+    setTempSelectedCategories(checked ? categories.map(category => category.name) : []);
+    // Clear semantic search when filters are changed
+    dispatch(clearSemanticSearch());
+  };
+
+  const toggleCategoryFilter = (categoryName: string) => {
+    setTempSelectedCategories(prev => 
+      prev.includes(categoryName)
+        ? prev.filter(name => name !== categoryName)
+        : [...prev, categoryName]
+    );
+    // Clear semantic search when filters are changed
+    dispatch(clearSemanticSearch());
+  };
+
+  const toggleAllUsers = (checked: boolean) => {
+    setTempSelectedUsers(checked ? (users as User[]).map(user => user.user_id) : []);
+    // Clear semantic search when filters are changed
+    dispatch(clearSemanticSearch());
+  };
+
+  const toggleUserFilter = (userId: string) => {
+    setTempSelectedUsers(prev => 
+      prev.includes(userId)
+        ? prev.filter(id => id !== userId)
+        : [...prev, userId]
+    );
+    // Clear semantic search when filters are changed
+    dispatch(clearSemanticSearch());
+  };
 
   useEffect(() => {
     fetchApps({ page_size: 100 });
@@ -83,25 +173,21 @@ export default function FilterComponent() {
   }, [fetchApps, fetchCategories, fetchUsers]);
 
   useEffect(() => {
-    // Initialize temporary selections with current active filters when dialog opens
     if (isOpen) {
       setTempSelectedApps(filters.selectedApps);
+      setTempSelectedAppNames(filters.selectedAppNames);
       setTempSelectedCategories(filters.selectedCategories);
       setTempSelectedUsers(filters.selectedUsers);
       setShowArchived(filters.showArchived || false);
       setMetadataFilters(filters.metadataFilters || {});
       setMetadataKey("");
       setMetadataValue("");
-      
-      // Refresh all filter data when dialog opens
-      fetchApps({ page_size: 100 });
-      fetchCategories();
-      fetchUsers();
     }
-  }, [isOpen, filters, fetchApps, fetchCategories, fetchUsers]);
+  }, [isOpen, filters]);
 
   const handleClearFilters = async () => {
     setTempSelectedApps([]);
+    setTempSelectedAppNames([]);
     setTempSelectedCategories([]);
     setTempSelectedUsers([]);
     setShowArchived(false);
@@ -122,13 +208,12 @@ export default function FilterComponent() {
         .filter((cat) => tempSelectedCategories.includes(cat.name))
         .map((cat) => cat.id);
 
-      // Get app IDs for selected app names
-      const selectedAppIds = apps
-        .filter((app) => tempSelectedApps.includes(app.id))
-        .map((app) => app.id);
+      // Clear semantic search when applying filters
+      dispatch(clearSemanticSearch());
 
       // Update the global state with temporary selections
       dispatch(setSelectedApps(tempSelectedApps));
+      dispatch(setSelectedAppNames(tempSelectedAppNames));
       dispatch(setSelectedCategories(tempSelectedCategories));
       dispatch(setSelectedUsers(tempSelectedUsers));
       dispatch(setShowArchived(showArchived));
@@ -136,7 +221,7 @@ export default function FilterComponent() {
 
       try {
         await fetchMemories(undefined, 1, 10, {
-          apps: selectedAppIds,
+          app_names: tempSelectedAppNames, // Send app names instead of app IDs
           categories: selectedCategoryIds,
           users: tempSelectedUsers,
           metadata: metadataFilters,
@@ -157,6 +242,7 @@ export default function FilterComponent() {
     if (!open) {
       // Reset temporary selections to active filters when dialog closes without applying
       setTempSelectedApps(filters.selectedApps);
+      setTempSelectedAppNames(filters.selectedAppNames);
       setTempSelectedCategories(filters.selectedCategories);
       setTempSelectedUsers(filters.selectedUsers);
       setShowArchived(filters.showArchived || false);
@@ -175,6 +261,7 @@ export default function FilterComponent() {
 
   const hasTempFilters =
     tempSelectedApps.length > 0 ||
+    tempSelectedAppNames.length > 0 ||
     tempSelectedCategories.length > 0 ||
     tempSelectedUsers.length > 0 ||
     Object.keys(metadataFilters).length > 0 ||
@@ -211,6 +298,18 @@ export default function FilterComponent() {
               <span>Filters</span>
             </DialogTitle>
           </DialogHeader>
+          
+          {semanticSearch.active && (
+            <div className="mb-4 p-3 bg-yellow-900/20 border border-yellow-700/50 rounded-md">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                <span className="text-sm text-yellow-300">
+                  Active semantic search will be cleared when applying filters
+                </span>
+              </div>
+            </div>
+          )}
+          
           <Tabs defaultValue="apps" className="w-full mt-4">
             <TabsList className="grid grid-cols-5 bg-zinc-800 w-full h-auto p-1">
               <TabsTrigger
@@ -416,6 +515,8 @@ export default function FilterComponent() {
                       setMetadataFilters(newMetadata);
                       setMetadataKey("");
                       setMetadataValue("");
+                      // Clear semantic search when metadata filters are changed
+                      dispatch(clearSemanticSearch());
                     }
                   }}
                   className="w-full"
@@ -434,6 +535,8 @@ export default function FilterComponent() {
                           const newMetadata = { ...metadataFilters };
                           delete newMetadata[key];
                           setMetadataFilters(newMetadata);
+                          // Clear semantic search when metadata filters are changed
+                          dispatch(clearSemanticSearch());
                         }}
                       >
                         <X className="h-4 w-4 text-zinc-500" />
@@ -448,7 +551,11 @@ export default function FilterComponent() {
                 <Checkbox
                   id="show-archived"
                   checked={showArchived}
-                  onCheckedChange={(checked) => setShowArchived(checked as boolean)}
+                  onCheckedChange={(checked) => {
+                    setShowArchived(checked as boolean);
+                    // Clear semantic search when archived filter is changed
+                    dispatch(clearSemanticSearch());
+                  }}
                   className="border-zinc-600 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                 />
                 <Label htmlFor="show-archived" className="text-sm font-normal text-zinc-300 cursor-pointer">

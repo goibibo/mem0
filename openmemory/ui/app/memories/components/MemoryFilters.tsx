@@ -18,6 +18,7 @@ import { debounce } from "lodash";
 import { useEffect, useRef } from "react";
 import FilterComponent from "./FilterComponent";
 import { clearFilters } from "@/store/filtersSlice";
+import { clearSemanticSearch } from "@/store/memoriesSlice";
 import { SearchMemoriesDialog } from "./SearchMemoriesDialog";
 
 export function MemoryFilters() {
@@ -29,6 +30,7 @@ export function MemoryFilters() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeFilters = useSelector((state: RootState) => state.filters.apps);
+  const semanticSearch = useSelector((state: RootState) => state.memories.semanticSearch);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDeleteSelected = async () => {
@@ -81,6 +83,7 @@ export function MemoryFilters() {
 
   const handleClearAllFilters = async () => {
     dispatch(clearFilters());
+    dispatch(clearSemanticSearch()); // Also clear semantic search
     // Clear search param as well
     router.push('/memories');
     if (inputRef.current) {
@@ -95,7 +98,8 @@ export function MemoryFilters() {
     activeFilters.selectedUsers.length > 0 ||
     Object.keys(activeFilters.metadataFilters || {}).length > 0 ||
     activeFilters.showArchived ||
-    searchParams.get("search");
+    searchParams.get("search") ||
+    semanticSearch.active;
 
   return (
     <div className="flex flex-col gap-4 mb-4">
