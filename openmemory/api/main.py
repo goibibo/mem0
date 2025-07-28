@@ -1,5 +1,6 @@
 import datetime
 from uuid import uuid4
+from typing import Dict
 
 from app.config import DEFAULT_APP_ID, USER_ID
 from app.database import Base, SessionLocal, engine
@@ -87,3 +88,13 @@ app.include_router(users_router)
 
 # Add pagination support
 add_pagination(app)
+
+@app.get("/health", response_model=Dict[str, str], tags=["health"])
+async def health_check():
+    """
+    Health check endpoint to verify the API server is running.
+    
+    Returns:
+        Dict[str, str]: A JSON response with status "healthy"
+    """
+    return {"status": "healthy"}

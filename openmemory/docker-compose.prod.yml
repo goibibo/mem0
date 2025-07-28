@@ -1,6 +1,6 @@
 services:
   openmemory-mcp:
-    image: dpt-openmemory-mcp:0.1.0
+    image: dpt-openmemory-mcp:0.1.1
     build:
       context: api/
       dockerfile: Dockerfile
@@ -40,7 +40,7 @@ services:
     build:
       context: ui/
       dockerfile: Dockerfile
-    image: dpt-openmemory-ui:0.1.0
+    image: dpt-openmemory-ui:0.1.1
     ports:
       - "3000:3000"
     environment:
