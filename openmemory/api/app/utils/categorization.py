@@ -2,14 +2,17 @@ import logging
 from typing import List
 
 from app.utils.prompts import MEMORY_CATEGORIZATION_PROMPT
+from app.utils.parse_config import get_parsed_config
+from mem0.utils.factory import LlmFactory
+
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
-openai_client = OpenAI()
-
+config = get_parsed_config()
+llm_client = LlmFactory.create(config["llm"]["provider"], config["llm"]["config"])
 
 class MemoryCategories(BaseModel):
     categories: List[str]
@@ -23,21 +26,44 @@ def get_categories_for_memory(memory: str) -> List[str]:
             {"role": "user", "content": memory}
         ]
 
-        # Let OpenAI handle the pydantic parsing directly
-        completion = openai_client.beta.chat.completions.parse(
-            model="gpt-4o-mini",
+        # Use JSON response format instead of Pydantic model
+        completion = llm_client.generate_response(
             messages=messages,
-            response_format=MemoryCategories,
-            temperature=0
+            response_format={"type": "json_object"}
         )
 
-        parsed: MemoryCategories = completion.choices[0].message.parsed
-        return [cat.strip().lower() for cat in parsed.categories]
+        # Parse the JSON response manually
+        import json
+        try:
+            # Handle case where response might be a string or already parsed
+            if isinstance(completion, str):
+                response_data = json.loads(completion)
+            else:
+                # If it's already a dict/object, use it directly
+                response_data = completion
+            
+            # Extract categories from the response
+            if isinstance(response_data, dict) and "categories" in response_data:
+                categories = response_data["categories"]
+            else:
+                # Fallback: try to extract categories from the response
+                categories = response_data.get("categories", [])
+            
+            if not categories:
+                logging.warning(f"No categories found in response: {response_data}")
+                return []
+            
+            return [cat.strip().lower() for cat in categories if cat]
+
+        except json.JSONDecodeError as json_e:
+            logging.error(f"Failed to parse JSON response: {json_e}")
+            logging.debug(f"Raw response: {completion}")
+            return []
 
     except Exception as e:
         logging.error(f"[ERROR] Failed to get categories: {e}")
         try:
-            logging.debug(f"[DEBUG] Raw response: {completion.choices[0].message.content}")
+            logging.debug(f"[DEBUG] Raw response: {completion}")
         except Exception as debug_e:
             logging.debug(f"[DEBUG] Could not extract raw response: {debug_e}")
-        raise
+        return []

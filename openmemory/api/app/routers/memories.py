@@ -280,7 +280,7 @@ async def create_memory(
         )
         
         # Log the response for debugging
-        logging.info(f"Qdrant response: {qdrant_response}")
+        #logging.info(f"Qdrant response: {qdrant_response}")
         
         # Process Qdrant response
         if isinstance(qdrant_response, dict) and 'results' in qdrant_response:
@@ -364,9 +364,35 @@ async def delete_memories(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    deleted_count = 0
+    vector_store_errors = []
+    
     for memory_id in request.memory_ids:
+        # Update database state to deleted
         update_memory_state(db, memory_id, MemoryState.deleted, user.id)
-    return {"message": f"Successfully deleted {len(request.memory_ids)} memories"}
+        
+        # Delete from vector store
+        try:
+            memory_client = get_memory_client()
+            if memory_client:
+                memory_client.delete(str(memory_id))
+                logging.info(f"Deleted memory {memory_id} from vector store")
+            else:
+                logging.warning("Memory client not available, skipping vector store deletion")
+        except Exception as e:
+            error_msg = f"Error deleting memory {memory_id} from vector store: {e}"
+            logging.error(error_msg)
+            vector_store_errors.append(error_msg)
+        
+        deleted_count += 1
+    
+    # Return response with information about any vector store errors
+    response_message = f"Successfully deleted {deleted_count} memories from database"
+    if vector_store_errors:
+        response_message += f". Vector store errors: {len(vector_store_errors)} memories had issues"
+        logging.warning(f"Vector store deletion errors: {vector_store_errors}")
+    
+    return {"message": response_message}
 
 
 # Archive memories
@@ -503,9 +529,35 @@ async def update_memory(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     memory = get_memory_or_404(db, memory_id)
+    
+    # Update database
     memory.content = request.memory_content
+    memory.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(memory)
+    
+    # Update vector store
+    try:
+        memory_client = get_memory_client()
+        if memory_client:
+            # Get app name for vector store update
+            app = db.query(App).filter(App.id == memory.app_id).first()
+            app_name = app.name if app else "openmemory"
+            
+            # Update the memory in vector store
+            memory_client.update(
+                memory_id=str(memory_id),
+                text=request.memory_content,
+                metadata=memory.metadata_ or {}
+            )
+            logging.info(f"Updated memory {memory_id} in vector store")
+        else:
+            logging.warning("Memory client not available, skipping vector store update")
+    except Exception as e:
+        logging.error(f"Error updating memory {memory_id} in vector store: {e}")
+        # Don't fail the request if vector store update fails
+        # The database update was successful
+    
     return memory
 
 class FilterMemoriesRequest(BaseModel):
@@ -529,19 +581,6 @@ async def filter_memories(
     request: FilterMemoriesRequest,
     db: Session = Depends(get_db)
 ):
-    # Add debug logging
-    logging.info(f"Filter request received: {request}")
-    
-    # Log database state for debugging
-    all_users = db.query(User).all()
-    all_apps = db.query(App).all()
-    all_memories = db.query(Memory).filter(Memory.state != MemoryState.deleted).all()
-    
-    logging.info(f"Database state - Users: {len(all_users)}, Apps: {len(all_apps)}, Memories: {len(all_memories)}")
-    logging.info(f"Users: {[(u.user_id, u.id) for u in all_users]}")
-    logging.info(f"Apps: {[(a.name, a.id, a.owner_id) for a in all_apps]}")
-    logging.info(f"Memories by user: {[(m.user_id, m.app_id) for m in all_memories[:10]]}")  # Show first 10
-    
     # Handle user filtering
     user_ids_to_filter = []
     
@@ -551,15 +590,12 @@ async def filter_memories(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         user_ids_to_filter = [user.id]
-        logging.info(f"Filtering by single user_id: {request.user_id} -> {user.id}")
     elif request.user_ids and len(request.user_ids) > 0:
         users = db.query(User).filter(User.user_id.in_(request.user_ids)).all()
         user_ids_to_filter = [user.id for user in users]
-        logging.info(f"Filtering by multiple user_ids: {request.user_ids} -> {user_ids_to_filter}")
     else:
         # If no user specified, get all memories from all users
         user_ids_to_filter = None
-        logging.info("No user filter specified - getting memories from all users")
 
     # Build base query
     query = db.query(Memory).filter(
@@ -569,72 +605,39 @@ async def filter_memories(
     # Apply user filter if specified
     if user_ids_to_filter is not None:
         query = query.filter(Memory.user_id.in_(user_ids_to_filter))
-        logging.info(f"Applied user filter: {user_ids_to_filter}")
-    else:
-        logging.info("No user filter applied - querying all users")
 
     # Filter archived memories based on show_archived parameter
     if not request.show_archived:
         query = query.filter(Memory.state != MemoryState.archived)
-        logging.info("Filtered out archived memories")
 
     # Apply search filter
     if request.search_query:
         query = query.filter(Memory.content.ilike(f"%{request.search_query}%"))
-        logging.info(f"Applied search filter: {request.search_query}")
 
     # Apply app filter
     if request.app_ids and len(request.app_ids) > 0:
         query = query.filter(Memory.app_id.in_(request.app_ids))
-        logging.info(f"Applied app filter: {request.app_ids}")
-        
-        # Log memories for the specific app before user filtering
-        app_memories = db.query(Memory).filter(
-            Memory.app_id.in_(request.app_ids),
-            Memory.state != MemoryState.deleted
-        ).all()
-        logging.info(f"Memories for app {request.app_ids} before user filtering: {len(app_memories)}")
-        logging.info(f"App memories by user: {[(m.user_id, m.app_id) for m in app_memories]}")
     elif request.app_names and len(request.app_names) > 0:
         # Filter by app names using a subquery to get app IDs
         app_names_to_filter = [name.strip() for name in request.app_names]
         app_ids_subquery = db.query(App.id).filter(App.name.in_(app_names_to_filter)).subquery()
         query = query.filter(Memory.app_id.in_(app_ids_subquery))
-        logging.info(f"Applied app name filter: {app_names_to_filter}")
-        # Log memories for the specific app names before user filtering
-        app_memories = db.query(Memory).join(App, Memory.app_id == App.id).filter(
-            App.name.in_(app_names_to_filter),
-            Memory.state != MemoryState.deleted
-        ).all()
-        logging.info(f"Memories for app names {app_names_to_filter} before user filtering: {len(app_memories)}")
-        logging.info(f"App memories by user: {[(m.user_id, m.app_id) for m in app_memories]}")
-    else:
-        logging.info("No app filter applied")
 
     # Always join App table for app_name in response and potential sorting
-    # Use left join to ensure we get all memories even if app is not found
     query = query.outerjoin(App, Memory.app_id == App.id)
 
     # Apply category filter
     if request.category_ids and len(request.category_ids) > 0:
         query = query.join(Memory.categories).filter(Category.id.in_(request.category_ids))
-        logging.info(f"Applied category filter: {request.category_ids}")
     else:
         query = query.outerjoin(Memory.categories)
-        logging.info("No category filter applied")
 
     # Apply metadata filters
     if request.metadata_filters:
-        logging.info(f"Applying metadata filters: {request.metadata_filters}")
         for key, value in request.metadata_filters.items():
-            # Use JSON path extraction that works with both SQLite and MySQL
-            # For SQLite: uses json_extract
-            # For MySQL: uses ->> operator
-            from sqlalchemy import func
             query = query.filter(
                 func.json_extract(Memory.metadata_, f'$.{key}') == value
             )
-            logging.info(f"Applied filter for key '{key}' with value '{value}'")
 
     # Apply date filters
     if request.from_date:
@@ -674,14 +677,6 @@ async def filter_memories(
         joinedload(Memory.categories),
         joinedload(Memory.user)
     ).distinct(Memory.id)
-
-    # Log the final query count before pagination
-    total_count = query.count()
-    logging.info(f"Total memories found before pagination: {total_count}")
-
-    # Log a sample of the results for debugging
-    sample_memories = query.limit(5).all()
-    logging.info(f"Sample memories: {[(m.id, m.user_id, m.app_id) for m in sample_memories]}")
 
     # Use fastapi-pagination's paginate function
     return sqlalchemy_paginate(
@@ -767,7 +762,7 @@ class SearchMemoriesRequest(BaseModel):
     user_id: Optional[str] = Field(None, description="Single user ID to filter by", example="user123")
     user_ids: Optional[List[str]] = Field(None, description="Multiple user IDs to filter by", example=["user1", "user2"])
     limit: int = Field(10, description="Maximum number of results", ge=1, le=100)
-    threshold: float = Field(0.0, description="Minimum relevance score (0-1)", ge=0.0, le=1.0)
+    threshold: float = Field(0.3, description="Minimum relevance score (0-1)", ge=0.0, le=1.0)
     include_metadata: bool = Field(True, description="Include custom metadata in response")
     app_ids: Optional[List[UUID]] = Field(None, description="Filter by application IDs")
     app_names: Optional[List[str]] = Field(None, description="Filter by application names")
@@ -832,7 +827,7 @@ async def search_memories(
             app_names = [name[0] for name in app_names]
             if app_names:
                 conditions.append(qdrant_models.FieldCondition(
-                    key="app_name",
+                    key="agent_id",
                     match=qdrant_models.MatchAny(any=app_names)
                 ))
         elif request.app_names:
@@ -840,10 +835,10 @@ async def search_memories(
             app_names_to_filter = [name.strip() for name in request.app_names]
             if app_names_to_filter:
                 conditions.append(qdrant_models.FieldCondition(
-                    key="app_name",
+                    key="agent_id",
                     match=qdrant_models.MatchAny(any=app_names_to_filter)
                 ))
-                logging.info(f"Applied app name filter in semantic search: {app_names_to_filter}")
+                logging.info(f"Applied agent_id filter in semantic search: {app_names_to_filter}")
         
         # Create filter if conditions exist
         filters = qdrant_models.Filter(must=conditions) if conditions else None

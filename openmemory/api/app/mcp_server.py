@@ -23,7 +23,7 @@ import uuid
 from typing import Optional
 
 from app.database import SessionLocal
-from app.models import Memory, MemoryAccessLog, MemoryState, MemoryStatusHistory
+from app.models import Memory, MemoryAccessLog, MemoryState, MemoryStatusHistory, App, User
 from app.utils.db import get_user_and_app
 from app.utils.memory import get_memory_client
 from app.utils.permissions import check_memory_access_permissions
@@ -166,129 +166,6 @@ async def add_memories(text: str, user_id: str = "", metadata: Optional[dict] = 
         return f"Error adding to memory: {e}"
 
 
-@mcp.tool(description="""Search through stored memories using natural language queries.
-
-Parameters:
-- query (required): The search query in natural language. Be specific about what you're looking for.
-- user_id (optional): The ID of the user whose memories to search. If not provided, will use the current session user.
-
-Returns: A JSON array of matching memories, each containing:
-- id: The memory ID
-- memory: The memory content
-- score: Relevance score (higher is more relevant)
-- metadata: Any custom metadata associated with the memory
-- created_at/updated_at: Timestamps
-
-This method should be called EVERY TIME the user asks a question to retrieve relevant context.
-""")
-async def search_memory(query: str, user_id: str = "") -> str:
-    uid = user_id_var.get(None) or user_id
-    client_name = client_name_var.get(None)
-    logging.info(f"Searching memory: {query} for user: {uid} and client: {client_name}")
-    if not uid or uid == "":
-        return "Error: user_id not provided"
-    if not client_name:
-        return "Error: client_name not provided"
-
-    # Get memory client safely
-    memory_client = get_memory_client_safe()
-    if not memory_client:
-        return "Error: Memory system is currently unavailable. Please try again later."
-
-    try:
-        db = SessionLocal()
-        try:
-            # Get or create user and app
-            user, app = get_user_and_app(db, user_id=uid, app_id=client_name)
-
-            # Get accessible memory IDs based on ACL
-            user_memories = db.query(Memory).filter(Memory.user_id == user.id).all()
-            accessible_memory_ids = [memory.id for memory in user_memories if check_memory_access_permissions(db, memory, app.id)]
-            
-            conditions = [qdrant_models.FieldCondition(key="user_id", match=qdrant_models.MatchValue(value=uid))]
-            
-            if accessible_memory_ids:
-                # Convert UUIDs to strings for Qdrant
-                accessible_memory_ids_str = [str(memory_id) for memory_id in accessible_memory_ids]
-                conditions.append(qdrant_models.HasIdCondition(has_id=accessible_memory_ids_str))
-
-            filters = qdrant_models.Filter(must=conditions)
-            embeddings = memory_client.embedding_model.embed(query, "search")
-            
-            hits = memory_client.vector_store.client.query_points(
-                collection_name=memory_client.vector_store.collection_name,
-                query=embeddings,
-                query_filter=filters,
-                limit=10,
-            )
-
-            # Process search results
-            memories = hits.points
-            memories = [
-                {
-                    "id": memory.id,
-                    "memory": memory.payload["data"],
-                    "hash": memory.payload.get("hash"),
-                    "created_at": memory.payload.get("created_at"),
-                    "updated_at": memory.payload.get("updated_at"),
-                    "score": memory.score,
-                }
-                for memory in memories
-            ]
-
-            # Enrich memories with metadata from database
-            enriched_memories = []
-            for memory in memories:
-                memory_id = uuid.UUID(memory['id'])
-                db_memory = db.query(Memory).filter(Memory.id == memory_id).first()
-                if db_memory:
-                    memory['metadata'] = db_memory.metadata_ or {}
-                enriched_memories.append(memory)
-            memories = enriched_memories
-
-            # Log memory access for each memory found
-            if isinstance(memories, dict) and 'results' in memories:
-                print(f"Memories: {memories}")
-                for memory_data in memories['results']:
-                    if 'id' in memory_data:
-                        memory_id = uuid.UUID(memory_data['id'])
-                        # Create access log entry
-                        access_log = MemoryAccessLog(
-                            memory_id=memory_id,
-                            app_id=app.id,
-                            access_type="search",
-                            metadata_={
-                                "query": query,
-                                "score": memory_data.get('score'),
-                                "hash": memory_data.get('hash')
-                            }
-                        )
-                        db.add(access_log)
-                db.commit()
-            else:
-                for memory in memories:
-                    memory_id = uuid.UUID(memory['id'])
-                    # Create access log entry
-                    access_log = MemoryAccessLog(
-                        memory_id=memory_id,
-                        app_id=app.id,
-                        access_type="search",
-                        metadata_={
-                            "query": query,
-                            "score": memory.get('score'),
-                            "hash": memory.get('hash')
-                        }
-                    )
-                    db.add(access_log)
-                db.commit()
-            return json.dumps(memories, indent=2)
-        finally:
-            db.close()
-    except Exception as e:
-        logging.exception(e)
-        return f"Error searching memory: {e}"
-
-
 @mcp.tool(description="""List all memories stored for a user.
 
 Parameters:
@@ -404,8 +281,23 @@ async def delete_all_memories(user_id: str = "") -> str:
         return "Error: Memory system is currently unavailable. Please try again later."
 
     try:
-        memory_client.delete_all(user_id=uid)
-        return "All memories deleted"
+        db = SessionLocal()
+        try:
+            # Get or create user and app
+            user, app = get_user_and_app(db, user_id=uid, app_id=client_name)
+            
+            # First, delete from vector store (Qdrant)
+            memory_client.delete_all(user_id=uid)
+            logging.info(f"Deleted memories from vector store for user: {uid}")
+            
+            # Then, delete from database
+            deleted_count = db.query(Memory).filter(Memory.user_id == user.id).delete()
+            db.commit()
+            logging.info(f"Deleted {deleted_count} memories from database for user: {uid}")
+            
+            return f"All memories deleted successfully. Removed {deleted_count} memories from database."
+        finally:
+            db.close()
     except Exception as e:
         logging.exception(e)
         return f"Error deleting memories: {e}"
@@ -416,8 +308,11 @@ async def delete_all_memories(user_id: str = "") -> str:
 Parameters:
 - query (required): The search query in natural language. Be specific about what you're looking for.
 - user_id (optional): The ID of the user whose memories to search. If not provided, will use the current session user.
+- user_ids (optional): List of user IDs to search across multiple users. If provided, overrides user_id.
 - metadata_filters (optional): A dictionary of key-value pairs to filter memories by metadata.
   Example: {"category": "preference", "topic": "food"} will only return memories with matching metadata.
+- threshold (optional): The minimum relevance score (0-1) for the search results. Default is 0.3.
+- limit (optional): The maximum number of results to return. Default is 20.
 
 Returns: A JSON array of matching memories sorted by relevance, each containing:
 - id: The memory ID
@@ -426,9 +321,10 @@ Returns: A JSON array of matching memories sorted by relevance, each containing:
 - metadata: Custom metadata associated with the memory
 - created_at/updated_at: Timestamps
 
+This method should be called EVERY TIME the user asks a question to retrieve relevant context.
 Use this for advanced searches when you need to filter by specific metadata attributes.
 """)
-async def search_memories(query: str, user_id: str = "", metadata_filters: Optional[dict] = None) -> str:
+async def search_memories(query: str, user_id: str = "", user_ids: Optional[list] = None, metadata_filters: Optional[dict] = None, threshold: Optional[float] = 0.3, limit: Optional[int] = 20) -> str:
     uid = user_id_var.get(None) or user_id
     client_name = client_name_var.get(None)
     logging.info(f"Searching memories with filters: {query} for user: {uid} and client: {client_name}, filters: {metadata_filters}")
@@ -449,63 +345,67 @@ async def search_memories(query: str, user_id: str = "", metadata_filters: Optio
             # Get or create user and app
             user, app = get_user_and_app(db, user_id=uid, app_id=client_name)
 
-            # First, get all user memories and filter by metadata if needed
-            query_filter = db.query(Memory).filter(
-                Memory.user_id == user.id,
-                Memory.state == MemoryState.active
-            )
+            # Build conditions for vector search
+            conditions = []
             
-            # Apply metadata filters if provided
-            if metadata_filters:
-                # Filter memories that match all metadata criteria
-                memories_with_metadata = []
-                all_memories = query_filter.all()
-                for memory in all_memories:
-                    if check_memory_access_permissions(db, memory, app.id):
-                        # Check if all metadata filters match
-                        if memory.metadata_:
-                            match = True
-                            for key, value in metadata_filters.items():
-                                if key not in memory.metadata_ or memory.metadata_[key] != value:
-                                    match = False
-                                    break
-                            if match:
-                                memories_with_metadata.append(memory)
-                        elif not metadata_filters:  # Empty filter matches memories without metadata
-                            memories_with_metadata.append(memory)
-                
-                accessible_memory_ids = [memory.id for memory in memories_with_metadata]
+            # User filter - use user_ids if provided, otherwise use single user_id
+            if user_ids and len(user_ids) > 0:
+                conditions.append(qdrant_models.FieldCondition(
+                    key="user_id", 
+                    match=qdrant_models.MatchAny(any=user_ids)
+                ))
+                logging.info(f"Searching across users: {user_ids}")
             else:
-                # No metadata filter, just permission check
-                user_memories = query_filter.all()
-                accessible_memory_ids = [memory.id for memory in user_memories if check_memory_access_permissions(db, memory, app.id)]
+                conditions.append(qdrant_models.FieldCondition(
+                    key="user_id", 
+                    match=qdrant_models.MatchValue(value=uid)
+                ))
+                logging.info(f"Searching for single user: {uid}")
             
-            if not accessible_memory_ids:
-                return json.dumps([], indent=2)
+            if client_name:
+                conditions.append(qdrant_models.FieldCondition(
+                    key="agent_id",
+                    match=qdrant_models.MatchValue(value=client_name)
+                ))
+                logging.info(f"Filtering by agent_id: {client_name}")
             
-            # Now perform vector search on the filtered memories
-            conditions = [
-                qdrant_models.FieldCondition(key="user_id", match=qdrant_models.MatchValue(value=uid)),
-                qdrant_models.HasIdCondition(has_id=[str(memory_id) for memory_id in accessible_memory_ids])
-            ]
+            # If metadata filters are provided, add them to vector store conditions
+            if metadata_filters:
+                for key, value in metadata_filters.items():
+                    conditions.append(qdrant_models.FieldCondition(
+                        key=key,
+                        match=qdrant_models.MatchValue(value=value)
+                    ))
+                logging.info(f"Applied metadata filters: {metadata_filters}")
             
+            # Create filter
             filters = qdrant_models.Filter(must=conditions)
+            
+            # Generate embeddings and perform vector search
             embeddings = memory_client.embedding_model.embed(query, "search")
             
             hits = memory_client.vector_store.client.query_points(
                 collection_name=memory_client.vector_store.collection_name,
                 query=embeddings,
                 query_filter=filters,
-                limit=20,
+                limit=limit,
+                score_threshold=threshold
             )
 
             # Process search results
             memories = hits.points
             result_memories = []
             
+            # Extract metadata directly from vector store payload (no database query needed)
+            # Following the same pattern as core mem0 library
+            promoted_payload_keys = ["user_id", "agent_id", "run_id", "actor_id", "role"]
+            core_and_promoted_keys = {"data", "hash", "created_at", "updated_at", "id", *promoted_payload_keys}
+            
             for memory in memories:
                 memory_id = uuid.UUID(memory.id)
-                db_memory = db.query(Memory).filter(Memory.id == memory_id).first()
+                
+                # Extract additional metadata from payload (excluding core keys)
+                additional_metadata = {k: v for k, v in memory.payload.items() if k not in core_and_promoted_keys}
                 
                 memory_data = {
                     "id": memory.id,
@@ -514,7 +414,9 @@ async def search_memories(query: str, user_id: str = "", metadata_filters: Optio
                     "created_at": memory.payload.get("created_at"),
                     "updated_at": memory.payload.get("updated_at"),
                     "score": memory.score,
-                    "metadata": db_memory.metadata_ or {} if db_memory else {}
+                    "user_id": memory.payload.get("user_id"),
+                    "app_name": memory.payload.get("app_name"),
+                    "metadata": additional_metadata if additional_metadata else {}
                 }
                 result_memories.append(memory_data)
                 
@@ -527,12 +429,15 @@ async def search_memories(query: str, user_id: str = "", metadata_filters: Optio
                         "query": query,
                         "score": memory_data.get('score'),
                         "hash": memory_data.get('hash'),
+                        "user_ids": user_ids if user_ids else [uid],
+                        "app_name": client_name,
                         "metadata_filters": metadata_filters
                     }
                 )
                 db.add(access_log)
             
             db.commit()
+            logging.info(f"Advanced search completed. Found {len(result_memories)} memories.")
             return json.dumps(result_memories, indent=2)
         finally:
             db.close()

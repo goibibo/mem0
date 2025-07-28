@@ -37,13 +37,24 @@ services:
     build: api/
     environment:
       - USER
-      - OPENAI_API_KEY
       - MYSQL_HOST
       - MYSQL_PORT
       - MYSQL_USER
       - MYSQL_PASSWORD
       - MYSQL_DATABASE
       - QDRANT_HOST
+      - LLM_PROVIDER
+      - LLM_MODEL
+      - LLM_API_KEY
+      - LLM_AZURE_DEPLOYMENT
+      - LLM_AZURE_ENDPOINT
+      - LLM_AZURE_API_VERSION
+      - EMBEDDER_PROVIDER
+      - EMBEDDER_MODEL
+      - EMBEDDER_API_KEY
+      - EMBEDDER_AZURE_DEPLOYMENT
+      - EMBEDDER_AZURE_ENDPOINT
+      - EMBEDDER_AZURE_API_VERSION
     env_file:
       - api/.env
     depends_on:
