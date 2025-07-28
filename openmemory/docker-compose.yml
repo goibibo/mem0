@@ -33,7 +33,7 @@ services:
       - mem0_storage:/mem0/storage
 
   openmemory-mcp:
-    image: mem0/openmemory-mcp
+    image: openmemory-mcp:0.1.0
     build: api/
     environment:
       - USER
@@ -73,7 +73,7 @@ services:
     build:
       context: ui/
       dockerfile: Dockerfile
-    image: mem0/openmemory-ui:latest
+    image: openmemory-ui:0.1.0
     ports:
       - "3000:3000"
     environment:
